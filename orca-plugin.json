@@ -3,21 +3,30 @@
   "manifestVersion": 2,
   "id": "x-feed",
   "name": "X Feed",
-  "version": "0.1.0",
-  "description": "Browse X (Twitter) trends, profiles, and search results right in your Orca sidebar.",
+  "version": "0.2.0",
+  "description": "在 Orca 侧边栏浏览 X 的热议话题、搜索结果与用户时间线。",
   "license": "MIT",
   "engines": {
     "orca": ">=1.4.246"
   },
   "execution": "trusted-worker",
-  "pluginApi": 1,
   "main": "worker.mjs",
+  "icon": "images/icon.png",
+  "cover": {
+    "path": "images/cover.png",
+    "alt": "深色卡片上的白色 X 标志，右侧是四条推文列表的示意图"
+  },
+  "author": {
+    "name": "LinDoo",
+    "url": "https://github.com/lindoo67"
+  },
+  "repository": "https://github.com/lindoo67/orca-x-feed",
   "contributes": {
     "panels": [
       {
-        "id": "x-feed",
+        "id": "feed",
         "title": "X Feed",
-        "icon": "share",
+        "icon": "globe",
         "entry": "panel/index.html",
         "ui": "html"
       }
@@ -25,56 +34,36 @@
     "settings": [
       {
         "key": "mode",
-        "title": "Default view",
-        "description": "What to show when you open X Feed.",
+        "title": "默认视图",
+        "description": "打开 X Feed 时显示的视图。",
         "type": "string",
         "default": "trending",
         "enum": ["trending", "search", "profile"],
-        "enumLabels": ["Trending", "Search", "Profile"]
+        "enumLabels": ["热议", "搜索", "用户"]
       },
       {
         "key": "apiBase",
-        "title": "API Base URL",
-        "description": "The backend to use. vxtwitter is free and requires no token. For private/timed tweets you need a Bearer token backend.",
+        "title": "API 基址",
+        "description": "抓取 X 内容的后端。留空则使用内置的公开代理端点。",
         "type": "string",
-        "default": "https://api.vxtwitter.com",
-        "placeholder": "https://api.vxtwitter.com"
+        "default": "https://api.fxtwitter.com",
+        "maxLength": 2048,
+        "placeholder": "https://api.fxtwitter.com"
       },
       {
-        "key": "bearerToken",
-        "title": "X Bearer Token",
-        "description": "Optional: a Bearer token from an X Developer app for authenticated requests.",
-        "type": "string",
-        "maxLength": 512
-      },
-      {
-        "key": "autoRefresh",
-        "title": "Auto-refresh interval",
-        "description": "How often to refresh the feed (0 = off).",
+        "key": "refreshMinutes",
+        "title": "自动刷新间隔（分钟）",
+        "description": "0 表示关闭自动刷新。",
         "type": "integer",
         "default": 0,
         "minimum": 0,
-        "maximum": 300
+        "maximum": 120
       }
     ]
   },
   "capabilities": [
-    {
-      "kind": "settings:own"
-    },
-    {
-      "kind": "network:origin:https://api.vxtwitter.com"
-    },
-    {
-      "kind": "network:origin:https://api.fxtwitter.com"
-    },
-    {
-      "kind": "network:origin:https://x.com"
-    }
-  ],
-  "author": {
-    "name": "LinDoo",
-    "url": "https://github.com/LinDoo"
-  },
-  "repository": "https://github.com/LinDoo/orca-x-feed"
+    { "kind": "settings:own" },
+    { "kind": "secrets:own" },
+    { "kind": "storage:own" }
+  ]
 }
