@@ -1,402 +1,269 @@
-// X Feed panel — the UI that runs in Orca's sidebar.
-const orca = window.__orca_panel__; // injected by Orca
+// X Feed panel. Plain script in an Orca frame: `window.orca` is injected before this runs.
+'use strict'
 
-// State
-let currentView = "trending";
-let tweets = [];
-let autoRefreshTimer = null;
+const el = (id) => document.getElementById(id)
 
-// DOM
-const app = document.getElementById("app");
-const tabs = document.querySelectorAll(".tab");
-const searchBtn = document.getElementById("btn-search");
-const profileBtn = document.getElementById("btn-profile");
-const btnRefresh = document.getElementById("btn-refresh");
-const btnSettings = document.getElementById("btn-settings");
-const searchBar = document.getElementById("search-bar");
-const profileBar = document.getElementById("profile-bar");
-const searchInput = document.getElementById("search-input");
-const profileInput = document.getElementById("profile-input");
-const feedHeader = document.getElementById("feed-header");
-const feedTitle = document.querySelector(".feed-title");
-const feed = document.getElementById("feed");
-const tweetCount = document.getElementById("tweet-count");
-const errorEl = document.getElementById("error");
-const errorText = document.getElementById("error-text");
-const profileBanner = document.getElementById("profile-banner");
+const inputEl = el('lookup-input')
+const goBtn = el('lookup-go')
+const clearBtn = el('lookup-clear')
+const resultEl = el('result')
+const savedEl = el('saved')
+const statusEl = el('status')
+const savedCountEl = el('saved-count')
 
-// Init
-init();
+let pending = null
 
-async function init() {
-  // Read saved settings to know which view to start with
-  const settings = await orca.settings.get(["mode"]) || {};
-  currentView = settings.mode || "trending";
-  switchView(currentView);
+// ---- worker calls -------------------------------------------------------
 
-  // Fetch initial data
-  await refresh();
-  startAutoRefresh();
-
-  // Listen for auto-refresh setting changes
-  orca.settings.onUpdate(async (newSettings) => {
-    if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-    autoRefreshTimer = null;
-    startAutoRefresh(newSettings);
-  });
+// One host method reaches the worker's `orca.panels.handle(name)` handlers.
+// Output is wrapped in `{ output }` by the host.
+async function request(name, input) {
+  const { output } = await orca.host.call('plugin.request', { name, input, timeoutMs: 20000 })
+  return output
 }
 
-function startAutoRefresh(settings = {}) {
-  if (autoRefreshTimer) {
-    clearInterval(autoRefreshTimer);
-    autoRefreshTimer = null;
-  }
-  const interval = (settings?.autoRefresh ?? 0) * 1000;
-  if (interval > 0) {
-    autoRefreshTimer = setInterval(refresh, interval);
-  }
+// Any error the host or worker raises carries a machine `code`.
+function describe(error) {
+  if (error?.code === 'unknown_method') return '这个 Orca 版本还不认识该调用。'
+  if (error?.code === 'not_permitted') return '这个操作需要一次真实点击。'
+  if (error?.code === 'timeout') return 'worker 超时了，可能上游 X 接口没响应。'
+  return error?.message || String(error ?? '未知错误')
 }
 
-function switchView(view) {
-  currentView = view;
-  tabs.forEach((t) => {
-    t.classList.toggle("active", t.dataset.view === view);
-    t.setAttribute("aria-selected", t.dataset.view === view ? "true" : "false");
-  });
+// ---- render -------------------------------------------------------------
 
-  // Show/hide bars
-  searchBar.hidden = view !== "search";
-  profileBar.hidden = view !== "profile";
-
-  // Clear profile banner
-  profileBanner.hidden = true;
-
-  // Update title
-  const titles = { trending: "Trending", search: "Search", profile: "Profile" };
-  feedTitle.textContent = titles[view] || "Trending";
-
-  // Clear feed
-  tweets = [];
-  renderFeed();
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+  )
 }
 
-async function refresh() {
-  showLoading();
-  hideError();
-
-  try {
-    const params = currentView === "search"
-      ? { query: searchInput?.value?.trim() || "" }
-      : currentView === "profile"
-      ? { username: profileInput?.value?.trim() || "" }
-      : {};
-
-    const result = await orca.panels.call("x-feed", `fetch${capitalize(currentView)}`, params);
-
-    if (result?.error) {
-      showError(result.error);
-      tweets = [];
-    } else if (currentView === "profile" && result?.user) {
-      tweets = result.tweets || [];
-      showProfile(result.user);
-    } else {
-      tweets = result?.tweets || [];
-    }
-
-    renderFeed();
-  } catch (err) {
-    showError(`Failed to fetch: ${err.message}`);
-    tweets = [];
-    renderFeed();
-  }
+function linkify(text) {
+  return esc(text)
+    .replace(/(https?:\/\/[^\s<]+)/g, '<span class="lnk">$1</span>')
+    .replace(/(^|[\s(])(@[A-Za-z0-9_]{1,15})/g, '$1<span class="men">$2</span>')
+    .replace(/(^|[\s(])(#[A-Za-z0-9_]{1,80})/g, '$1<span class="tag">$2</span>')
 }
 
-function renderFeed() {
-  feed.innerHTML = "";
-
-  if (tweets.length === 0) {
-    feed.innerHTML = `
-      <div class="empty">
-        <div class="empty-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-4"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h4"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
-        </div>
-        <p>No tweets found</p>
-      </div>`;
-    tweetCount.textContent = "0 tweets";
-    return;
-  }
-
-  tweetCount.textContent = `${tweets.length} tweet${tweets.length !== 1 ? "s" : ""}`;
-
-  for (const tweet of tweets) {
-    feed.appendChild(createTweetCard(tweet));
-  }
+function num(n) {
+  if (n === null || n === undefined) return '—'
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K'
+  return String(n)
 }
 
-function createTweetCard(tweet) {
-  const card = document.createElement("div");
-  card.className = "tweet";
+function ago(ts) {
+  if (!ts) return ''
+  const s = Math.max(0, (Date.now() / 1000) - Number(ts))
+  if (s < 60) return '刚刚'
+  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`
+  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`
+  if (s < 172800) return '昨天'
+  return new Date(Number(ts) * 1000).toLocaleDateString()
+}
 
-  const avatar = tweet.user?.avatar || "";
-  const avatarHtml = avatar
-    ? `<div class="tweet-avatar" style="background-image:url('${avatar}')" title="${escapeHtml(tweet.user.name || "")}"></div>`
-    : `<div class="tweet-avatar placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>`;
+// Remote images never load in the frame (CSP `img-src 'self' data:`), so the worker
+// hands us data: URLs already. A missing avatar falls back to initials.
+// fxtwitter reports "Tue Mar 21 20:50:14 +0000 2006"; show just the date.
+function joined(value) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? String(value ?? '') : `${date.getFullYear()} 年加入`
+}
 
-  // Process text: highlight mentions, hashtags, links
-  let text = escapeHtml(tweet.text || "");
-  text = text.replace(/(#\w+)/g, '<span class="hashtag">$1</span>');
-  text = text.replace(/(@\w+)/g, '<span class="mention">$1</span>');
+function avatar(url, name) {
+  if (url) return `<span class="ava" style="background-image:url('${esc(url)}')"></span>`
+  const initial = esc(String(name || '?').trim().charAt(0).toUpperCase() || '?')
+  return `<span class="ava ini">${initial}</span>`
+}
 
-  // Trend badge
-  const isTrend = tweet.isTrend || false;
-  const trendBadge = isTrend
-    ? `<span class="trend-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg> TREND</span>`
-    : "";
+function renderTweet(t) {
+  const media = (t.media ?? [])
+    .map((src) => `<img class="shot" src="${esc(src)}" alt="" loading="lazy" />`)
+    .join('')
+  const grid = t.media?.length > 1 ? 'grid' : ''
+  const s = t.stats ?? {}
 
-  // Images
-  let imagesHtml = "";
-  if (tweet.images?.length > 0) {
-    const cols = Math.min(tweet.images.length, 4);
-    const imgClass = `cols-${cols}`;
-    imagesHtml = `<div class="tweet-images ${imgClass}">${tweet.images.slice(0, 4).map((url) => `<img src="${url}" loading="lazy" alt="" />`).join("")}</div>`;
+  return `
+  <article class="card">
+    <header class="who">
+      ${avatar(t.author?.avatar, t.author?.name)}
+      <div class="who-t">
+        <strong>${esc(t.author?.name)}</strong>
+        ${t.author?.verified ? '<span class="vf" title="已认证">✓</span>' : ''}
+        <span class="hd">${esc(t.author?.handle)}</span>
+        <span class="dot">·</span>
+        <time class="tm">${esc(ago(t.createdTimestamp))}</time>
+      </div>
+      <button class="save" data-save="${esc(t.id)}" data-url="${esc(t.url)}"
+              data-handle="${esc(t.author?.handle)}" data-text="${esc((t.text || '').slice(0, 280))}"
+              title="收藏">☆</button>
+    </header>
+    ${t.replyingTo ? `<p class="reply-to">回复 @${esc(t.replyingTo)}</p>` : ''}
+    <p class="body">${linkify(t.text)}</p>
+    ${media ? `<div class="media ${grid}">${media}</div>` : ''}
+    ${t.quote ? `<blockquote class="quote">${avatar(t.quote.author?.avatar, t.quote.author?.name)}
+      <div><strong>${esc(t.quote.author?.name)}</strong> ${esc(t.quote.text)}</div></blockquote>` : ''}
+    ${t.communityNote ? `<p class="note">⚠ ${esc(t.communityNote)}</p>` : ''}
+    <footer class="metrics">
+      <span title="回复">💬 ${num(s.replies)}</span>
+      <span title="转推">🔁 ${num(s.retweets)}</span>
+      <span title="喜欢">♡ ${num(s.likes)}</span>
+      <span title="浏览">👁 ${num(s.views)}</span>
+      <a class="open" data-open="${esc(t.url)}">在 X 打开 ↗</a>
+    </footer>
+  </article>`
+}
+
+function renderProfile(p) {
+  const meta = [p.location, p.joined ? joined(p.joined) : ''].filter(Boolean).join(' · ')
+  return `
+  <article class="card prof">
+    <div class="phead">
+      ${avatar(p.avatar, p.name)}
+      <div>
+        <strong class="pname">${esc(p.name)}</strong>
+        ${p.verified ? '<span class="vf">✓</span>' : ''}
+        ${p.protected ? '<span class="lock">🔒 受保护</span>' : ''}
+        <p class="hd">${esc(p.handle)}</p>
+      </div>
+    </div>
+    ${p.description ? `<p class="pdesc">${linkify(p.description)}</p>` : ''}
+    ${meta ? `<p class="pmeta">${esc(meta)}</p>` : ''}
+    <div class="pstats">
+      <span><b>${num(p.tweets)}</b> 推文</span>
+      <span><b>${num(p.following)}</b> 关注</span>
+      <span><b>${num(p.followers)}</b> 粉丝</span>
+    </div>
+    ${p.website ? `<p class="pweb">🔗 <span class="lnk">${esc(p.website)}</span></p>` : ''}
+    <footer class="metrics"><a class="open" data-open="${esc(p.url)}">在 X 打开 ↗</a></footer>
+  </article>`
+}
+
+function renderSaved(rows) {
+  savedCountEl.textContent = rows.length ? `${rows.length}` : ''
+  if (!rows.length) {
+    savedEl.innerHTML = '<p class="none">还没有收藏。点开一条推文再按 ☆。</p>'
+    return
   }
-
-  // Actions
-  const actionsHtml = !isTrend
-    ? `<div class="tweet-actions">
-        ${tweet.replies ? `<button class="tweet-action" title="Replies: ${tweet.replies}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>${formatNum(tweet.replies)}</button>` : ""}
-        ${tweet.reposts ? `<button class="tweet-action" title="Reposts: ${tweet.reposts}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>${formatNum(tweet.reposts)}</button>` : ""}
-        ${tweet.likes ? `<button class="tweet-action" title="Likes: ${tweet.likes}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>${formatNum(tweet.likes)}</button>` : ""}
-        ${tweet.views ? `<button class="tweet-action" title="Views: ${tweet.views}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>${formatNum(tweet.views)}</button>` : ""}
+  savedEl.innerHTML = rows
+    .map(
+      (r) => `<div class="srow">
+        <a class="stxt open" data-open="${esc(r.url)}" title="${esc(r.text)}">
+          <span class="shd">${esc(r.handle || '')}</span>${esc(r.text || r.url)}
+        </a>
+        <button class="sdel" data-del="${esc(r.id)}" title="删除">×</button>
       </div>`
-    : "";
-
-  // Time
-  const timeStr = tweet.createdAt ? formatTime(tweet.createdAt) : "";
-
-  card.innerHTML = `
-    <div class="tweet-header">
-      ${avatarHtml}
-      <div class="tweet-body">
-        <div class="tweet-meta">
-          <span class="tweet-name">${escapeHtml(tweet.user?.name || "")}</span>
-          <span class="tweet-handle">${escapeHtml(tweet.user?.handle || "")}</span>
-          ${timeStr ? `<span class="tweet-dot">·</span><span class="tweet-time">${timeStr}</span>` : ""}
-          ${trendBadge}
-        </div>
-        <div class="tweet-text">${text}</div>
-        ${imagesHtml}
-        ${actionsHtml}
-      </div>
-    </div>`;
-
-  // Click to open in X
-  card.addEventListener("click", () => {
-    if (tweet.link) {
-      orca.host.openExternal(tweet.link);
-    } else {
-      orca.host.openExternal(`https://x.com/${tweet.user?.handle?.replace("@", "") || "user"}`);
-    }
-  });
-
-  return card;
+    )
+    .join('')
 }
 
-function showProfile(user) {
-  if (!user) {
-    profileBanner.hidden = true;
-    return;
-  }
+// ---- actions ------------------------------------------------------------
 
-  profileBanner.hidden = false;
-
-  // Avatar
-  const avatar = document.getElementById("profile-avatar");
-  if (user.avatar) {
-    avatar.style.backgroundImage = `url('${user.avatar}')`;
-  } else {
-    avatar.style.backgroundImage = "";
-    avatar.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
-    avatar.style.color = "var(--quiet)";
-  }
-
-  // Name & handle
-  document.getElementById("profile-name").textContent = user.name || "";
-  document.getElementById("profile-handle").textContent = user.handle || "";
-
-  // Description
-  const desc = document.getElementById("profile-desc");
-  desc.textContent = user.description || "";
-
-  // Stats
-  const stats = document.getElementById("profile-stats");
-  const parts = [];
-  if (user.followers) parts.push(`<span><strong>${typeof user.followers === "number" ? formatNum(user.followers) : user.followers}</strong> followers</span>`);
-  if (user.following) parts.push(`<span><strong>${typeof user.following === "number" ? formatNum(user.following) : user.following}</strong> following</span>`);
-  stats.innerHTML = parts.join("");
-
-  // Verified badge
-  const verified = document.getElementById("profile-verified");
-  verified.hidden = !user.verified;
-}
-
-function showLoading() {
-  feed.innerHTML = `
-    <div class="empty">
-      <div class="empty-icon spinning">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-4"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h4"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
-      </div>
-      <p>Loading tweets...</p>
-    </div>`;
-}
-
-function showError(msg) {
-  errorText.textContent = msg;
-  errorEl.hidden = false;
-}
-
-function hideError() {
-  errorEl.hidden = true;
-}
-
-// Settings dialog
-btnSettings.addEventListener("click", () => {
-  openSettingsDialog();
-});
-
-async function openSettingsDialog() {
-  const existing = document.querySelector("#settings-dialog");
-  if (existing) {
-    existing.showModal();
-    return;
-  }
-
-  const dialog = document.createElement("dialog");
-  dialog.id = "settings-dialog";
-
-  dialog.innerHTML = `
-    <h2>X Feed Settings</h2>
-    <div class="dialog-field">
-      <label for="setting-mode">Default view</label>
-      <select id="setting-mode">
-        <option value="trending">Trending</option>
-        <option value="search">Search</option>
-        <option value="profile">Profile</option>
-      </select>
-    </div>
-    <div class="dialog-field">
-      <label for="setting-api">API URL</label>
-      <input id="setting-api" type="text" placeholder="https://api.vxtwitter.com" />
-      <small>Free API that proxies X/Twitter content. No token needed.</small>
-    </div>
-    <div class="dialog-field">
-      <label for="setting-token">Bearer Token (optional)</label>
-      <input id="setting-token" type="password" placeholder="xpt_..." />
-      <small>For authenticated access (timed tweets, private lists).</small>
-    </div>
-    <div class="dialog-field">
-      <label for="setting-refresh">Auto-refresh (seconds)</label>
-      <input id="setting-refresh" type="number" min="0" max="300" />
-      <small>0 = off. Refreshes feed automatically at this interval.</small>
-    </div>
-    <div class="dialog-actions">
-      <button class="btn-ghost" id="cancel-settings">Cancel</button>
-      <button class="btn-primary" id="save-settings">Save</button>
-    </div>`;
-
-  document.body.appendChild(dialog);
-
-  // Pre-fill current values
-  const settings = await orca.settings.get(["mode", "apiBase", "bearerToken", "autoRefresh"]) || {};
-  dialog.querySelector("#setting-mode").value = settings.mode || "trending";
-  dialog.querySelector("#setting-api").value = settings.apiBase || "https://api.vxtwitter.com";
-  dialog.querySelector("#setting-token").value = settings.bearerToken || "";
-  dialog.querySelector("#setting-refresh").value = settings.autoRefresh ?? 0;
-
-  // Cancel
-  dialog.querySelector("#cancel-settings").addEventListener("click", () => dialog.close());
-
-  // Save
-  dialog.querySelector("#save-settings").addEventListener("click", async () => {
-    await orca.settings.set({
-      mode: dialog.querySelector("#setting-mode").value,
-      apiBase: dialog.querySelector("#setting-api").value.trim(),
-      bearerToken: dialog.querySelector("#setting-token").value.trim(),
-      autoRefresh: parseInt(dialog.querySelector("#setting-refresh").value) || 0
-    });
-    currentView = dialog.querySelector("#setting-mode").value;
-    switchView(currentView);
-    await refresh();
-    dialog.close();
-  });
-
-  dialog.showModal();
-
-  // Remove when closed
-  dialog.addEventListener("close", () => dialog.remove());
-}
-
-// Event listeners
-tabs.forEach((tab) => {
-  tab.addEventListener("click", () => {
-    switchView(tab.dataset.view);
-    refresh();
-  });
-});
-
-searchBtn?.addEventListener("click", () => {
-  refresh();
-});
-profileBtn?.addEventListener("click", () => {
-  refresh();
-});
-
-btnRefresh?.addEventListener("click", () => {
-  refresh();
-});
-
-// Enter key triggers search
-searchInput?.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") refresh();
-});
-profileInput?.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") refresh();
-});
-
-// ---- Helpers ----
-
-function capitalize(s) {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-function escapeHtml(str) {
-  if (!str) return "";
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-function formatNum(n) {
-  if (!n || n === 0) return "0";
-  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, "") + "M";
-  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "K";
-  return String(n);
-}
-
-function formatTime(createdAt) {
-  if (!createdAt) return "";
+async function lookup() {
+  const query = inputEl.value.trim()
+  if (!query) return
+  setBusy(true)
+  resultEl.innerHTML = '<p class="hint">抓取中…</p>'
   try {
-    const date = new Date(createdAt);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffSec = Math.floor(diffMs / 1000);
-
-    if (diffSec < 60) return `${diffSec}s`;
-    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m`;
-    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h`;
-    if (diffSec < 172800) return "1d";
-    return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  } catch {
-    return createdAt;
+    const out = await request('feed.lookup', { query })
+    if (out?.kind === 'tweet') resultEl.innerHTML = renderTweet(out.tweet)
+    else if (out?.kind === 'profile') resultEl.innerHTML = renderProfile(out.profile)
+    else resultEl.innerHTML = `<p class="err">${esc(out?.message ?? '没有内容')}</p>`
+  } catch (error) {
+    resultEl.innerHTML = `<p class="err">${esc(describe(error))}</p>`
+  } finally {
+    setBusy(false)
   }
 }
+
+async function showSaved() {
+  try {
+    renderSaved(await request('feed.list', {}))
+  } catch (error) {
+    savedEl.innerHTML = `<p class="err">${esc(describe(error))}</p>`
+  }
+}
+
+async function toggleSave(btn) {
+  const id = btn.dataset.save
+  const rows = await request('feed.list', {}).catch(() => [])
+  const already = rows.some((r) => r.id === id)
+  try {
+    const out = already
+      ? await request('feed.unsave', { id })
+      : await request('feed.save', {
+          item: { id, url: btn.dataset.url, handle: btn.dataset.handle, text: btn.dataset.text },
+        })
+    renderSaved(out.saved ?? (await request('feed.list', {})))
+    btn.textContent = already ? '☆' : '★'
+  } catch (error) {
+    flash(describe(error))
+  }
+}
+
+// `shell.openExternal` rejects with `not_permitted` unless it runs inside a real
+// press, so every open goes through a click handler and nothing pre-opens URLs.
+function openExternal(url) {
+  if (!url || !/^https?:\/\//i.test(url)) return
+  const opening = orca.shell?.openExternal?.(url)
+  if (opening?.catch) opening.catch((error) => flash(describe(error)))
+  else flash('这个 Orca 客户端不支持直接打开链接。')
+}
+
+// ---- misc UI ------------------------------------------------------------
+
+function setBusy(on) {
+  goBtn.disabled = on
+  goBtn.textContent = on ? '…' : '查询'
+}
+
+let flashTimer = null
+function flash(message) {
+  statusEl.textContent = message
+  clearTimeout(flashTimer)
+  flashTimer = setTimeout(() => (statusEl.textContent = ''), 4000)
+}
+
+// Clicks are delegated once so re-rendered markup needs no rebinding. `open-external`
+// is not a host method; the frame-level `shell.openExternal` is the only way out.
+document.addEventListener('click', (event) => {
+  const open = event.target.closest?.('[data-open]')
+  if (open) { openExternal(open.dataset.open); return }
+  const save = event.target.closest?.('[data-save]')
+  if (save) { toggleSave(save); return }
+  const del = event.target.closest?.('[data-del]')
+  if (del) {
+    request('feed.unsave', { id: del.dataset.del })
+      .then((out) => renderSaved(out.saved ?? []))
+      .catch((error) => flash(describe(error)))
+  }
+})
+
+// Orca swaps `light`/`dark` on <html> and emits `theme`; restyle from the tokens.
+function applyTheme(payload) {
+  const scheme = payload?.colorScheme
+  document.documentElement.classList.toggle('dark', scheme === 'dark')
+  document.documentElement.classList.toggle('light', scheme === 'light')
+}
+
+async function boot() {
+  if (!orca.host.has('plugin.request')) {
+    resultEl.innerHTML = '<p class="err">这个 Orca 版本没有 plugin.request，无法与 worker 通信。</p>'
+    return
+  }
+  await showSaved()
+  inputEl.focus()
+}
+
+goBtn.addEventListener('click', () => { lookup(); showSaved() })
+clearBtn.addEventListener('click', () => { inputEl.value = ''; inputEl.focus() })
+inputEl.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') { event.preventDefault(); lookup(); showSaved() }
+})
+
+if (orca.on) {
+  const subscription = orca.on('theme', applyTheme)
+  addEventListener('pagehide', () => subscription?.dispose?.())
+}
+
+boot()

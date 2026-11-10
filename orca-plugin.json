@@ -4,12 +4,13 @@
   "id": "x-feed",
   "name": "X Feed",
   "version": "0.2.0",
-  "description": "在 Orca 侧边栏浏览 X 的热议话题、搜索结果与用户时间线。",
+  "description": "在 Orca 侧边栏查看单条 X 推文和用户资料，附一个本地收藏列表。",
   "license": "MIT",
   "engines": {
     "orca": ">=1.4.246"
   },
   "execution": "trusted-worker",
+  "pluginApi": 1,
   "main": "worker.mjs",
   "icon": "images/icon.png",
   "cover": {
@@ -33,37 +34,18 @@
     ],
     "settings": [
       {
-        "key": "mode",
-        "title": "默认视图",
-        "description": "打开 X Feed 时显示的视图。",
-        "type": "string",
-        "default": "trending",
-        "enum": ["trending", "search", "profile"],
-        "enumLabels": ["热议", "搜索", "用户"]
-      },
-      {
         "key": "apiBase",
         "title": "API 基址",
-        "description": "抓取 X 内容的后端。留空则使用内置的公开代理端点。",
+        "description": "解析推文的后端，必须是 https。留空则使用 api.fxtwitter.com。",
         "type": "string",
         "default": "https://api.fxtwitter.com",
         "maxLength": 2048,
         "placeholder": "https://api.fxtwitter.com"
-      },
-      {
-        "key": "refreshMinutes",
-        "title": "自动刷新间隔（分钟）",
-        "description": "0 表示关闭自动刷新。",
-        "type": "integer",
-        "default": 0,
-        "minimum": 0,
-        "maximum": 120
       }
     ]
   },
   "capabilities": [
     { "kind": "settings:own" },
-    { "kind": "secrets:own" },
     { "kind": "storage:own" }
   ]
 }

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -7,107 +7,40 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div id="app" class="app">
-      <!-- Header -->
-      <header class="header">
-        <div class="logo">
-          <svg class="logo-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-          </svg>
+    <div class="app">
+      <header class="bar">
+        <div class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
         </div>
-        <div class="header-actions">
-          <button class="icon-btn" id="btn-settings" title="Settings">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-          </button>
-        </div>
+        <h1 class="title">X Feed</h1>
+        <span class="status" id="status" role="status" aria-live="polite"></span>
       </header>
 
-      <!-- Navigation Tabs -->
-      <nav class="tabs" role="tablist">
-        <button class="tab" data-view="trending" role="tab" aria-selected="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-          Trending
-        </button>
-        <button class="tab" data-view="search" role="tab">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          Search
-        </button>
-        <button class="tab" data-view="profile" role="tab">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          Profile
-        </button>
-      </nav>
-
-      <!-- Search Bar (search view) -->
-      <div class="toolbar" id="search-bar" hidden>
-        <div class="searchbox">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input type="text" id="search-input" placeholder="Search X..." />
-        </div>
-        <button class="icon-btn" id="btn-search" title="Search">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21 21-4.35-4.35"/></svg>
-        </button>
+      <div class="lookup">
+        <input
+          id="lookup-input"
+          type="text"
+          placeholder="推文链接 / 推文 ID / @用户名"
+          spellcheck="false"
+          autocomplete="off"
+        />
+        <button id="lookup-go" class="go">查询</button>
+        <button id="lookup-clear" class="ghost" title="清空">×</button>
       </div>
 
-      <!-- Profile Search Bar (profile view) -->
-      <div class="toolbar" id="profile-bar" hidden>
-        <div class="searchbox">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          <input type="text" id="profile-input" placeholder="@username or @handle" />
-        </div>
-        <button class="icon-btn" id="btn-profile" title="Load profile">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21 21-4.35-4.35"/></svg>
-        </button>
-      </div>
+      <div class="scroll">
+        <section id="result" class="result">
+          <p class="hint">
+            粘贴一条 x.com 链接，或输入 <code>@用户名</code> / 纯数字推文 ID，回车即可。<br />
+            只能查单条推文和单个用户 —— X 的时间线、搜索与热门没有公开接口。
+          </p>
+        </section>
 
-      <!-- Feed Header -->
-      <div class="feed-header" id="feed-header">
-        <h2 class="feed-title">Trending</h2>
-        <div class="feed-actions">
-          <button class="icon-btn" id="btn-refresh" title="Refresh">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-4"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h4"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
-          </button>
-        </div>
+        <section class="saved-wrap">
+          <h2 class="sect">收藏 <span class="pill" id="saved-count"></span></h2>
+          <div id="saved"><p class="none">还没有收藏。</p></div>
+        </section>
       </div>
-
-      <!-- User Profile Banner (shown when viewing a profile) -->
-      <div class="profile-banner" id="profile-banner" hidden>
-        <div class="profile-avatar" id="profile-avatar"></div>
-        <div class="profile-info">
-          <div class="profile-name-row">
-            <h3 class="profile-name" id="profile-name"></h3>
-            <svg class="verified-badge" id="profile-verified" viewBox="0 0 24 24" fill="#1D9BF0" hidden><path d="M22.5 12.5c0-1.58-.875-2.95-2.148-3.6.154-.435.238-.905.238-1.4 0-2.21-1.71-3.998-3.818-3.998-.47 0-.92.084-1.336.25C14.818 2.415 13.51 1.5 12 1.5s-2.816.917-3.437 2.25c-.415-.165-.866-.25-1.336-.25-2.11 0-3.818 1.79-3.818 4 0 .494.083.964.237 1.4-1.272.65-2.147 2.018-2.147 3.6 0 1.495.782 2.798 1.942 3.486-.02.17-.032.34-.032.514 0 2.21 1.708 4 3.818 4 .47 0 .92-.086 1.335-.25.62 1.334 1.926 2.25 3.437 2.25 1.512 0 2.818-.916 3.437-2.25.415.163.865.248 1.336.248 2.11 0 3.818-1.79 3.818-4 0-.174-.012-.344-.033-.513 1.158-.687 1.943-1.99 1.943-3.484zm-6.616-3.334l-4.334 6.5c-.145.217-.382.334-.625.334-.143 0-.288-.04-.416-.126l-.115-.094-2.415-2.415c-.293-.293-.293-.768 0-1.06s.768-.294 1.06 0l1.77 1.767 3.825-5.74c.23-.345.696-.436 1.04-.207.346.23.44.696.21 1.04z"/></svg>
-          </div>
-          <p class="profile-handle" id="profile-handle"></p>
-          <p class="profile-desc" id="profile-desc"></p>
-          <div class="profile-stats" id="profile-stats"></div>
-        </div>
-      </div>
-
-      <!-- Tweet Feed -->
-      <div class="scroll" id="feed">
-        <!-- Loading state -->
-        <div class="empty" id="loading">
-          <div class="empty-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-4"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h4"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
-          </div>
-          <p>Loading tweets...</p>
-        </div>
-      </div>
-
-      <!-- Error banner -->
-      <div class="error" id="error" hidden>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6m0-6 6 6"/></svg>
-        <span id="error-text"></span>
-      </div>
-
-      <!-- Footer -->
-      <footer class="footer">
-        <span id="tweet-count">0 tweets</span>
-        <span class="right">
-          <a href="https://x.com" target="_blank" rel="noopener">Open in X ↗</a>
-        </span>
-      </footer>
     </div>
     <script src="app.js"></script>
   </body>
